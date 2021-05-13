@@ -1,0 +1,1435 @@
+---
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+‘---
+output:
+  pdf_document: default
+  html_document: default
+---
+# Experiment 1 - Translation Equivalents Lexical Decision Task
+Analysis of the data from Experiment 1, where we employed a Lexical Decision Task with translation equivalent pairs. 
+
+Load .csv file and packages.
+
+```{r, eval=FALSE}
+library(dplyr)
+read.csv("ldt.data.csv")
+```
+
+## Data cleaning
+
+Remove unnecesary columns and change some columns' names. Remove pseudowords too. 
+```{r, eval=FALSE}
+ldt.data = ldt.data[,c("participant","group","Trial.Number","rt","Response","answer","accuracy",
+"target","prime","condition","language","concreteness","target.freq","prime.freq",
+"target.concreteness","prime.concreteness","L2_home","L2_social","composite_score",
+"lextale","self.english","loi.inmonths","age.inmonths")]
+colnames(ldt.data)[3] = "trial"
+colnames(ldt.data)[5] = "response"
+colnames(ldt.data)[22] = "loi"
+colnames(ldt.data)[23] = "age"
+ldt.data = subset(ldt.data, answer=="word")
+```
+
+Create dataset for the response latencies analysis. Remover errors and RTs above and below 5000 ms and 200 ms, respectively (Baayen & Milin, 2010). 
+```{r, eval=FALSE}
+ldt.data.rt = subset(ldt.data, accuracy==1)
+ldt.data.rt=ldt.data.rt[ldt.data.rt$rt >= 200,]
+ldt.data.rt=ldt.data.rt[ldt.data.rt$rt  <= 5000,]
+```
+
+Check frequency distributions and remove the few trials with value 0. 
+```{r, eval=FALSE}
+hist(ldt.data.rt$target.freq)
+hist(ldt.data.rt$prime.freq)
+ldt.data.rt = subset(ldt.data.rt, !target.freq==0)
+ldt.data.rt = subset(ldt.data.rt, !prime.freq==0)
+```
+
+Check RTs distribution and perform transformations (log-normal, ex-Gaussian, and BoxCox).
+```{r, eval=FALSE}
+hist(ldt.data.rt$rt) # RTs are skewed as expected.
+ldt.data.rt$invRT = -1000/ldt.data.rt$rt # ex-Gaussian
+ldt.data.rt$logRT = log(ldt.data.rt$rt) # Log-normal
+box = boxcox(ldt.data.rt$rt~1, lambda = seq(-6,6,0.1)) # BoxCox
+cox = data.frame(box$x,box$y)
+cox2 = cox[with(cox,order(-cox$box.y)),]
+cox2[1,]
+lambda = cox2[1, "box.x"]
+t_box = (ldt.data.rt$rt ^ lambda-1)/lambda
+ldt.data.rt$boxRT = BoxCox(ldt.data.rt$rt, lambda)
+```
+
+Extract subject mean RTs and do normality tests with the transformed distributions. 
+```{r,eval=FALSE}
+subMeans.rt = aggregate(rt~participant, data = ldt.data.rt, mean)
+colnames(subMeans.rt) = c("subject", "meanRT")
+shapiro.test(subMeans.rt$meanRT) # Raw RTs: < 0.001
+subQQ = qqnorm(subMeans.rt$meanRT); qqline(subMeans.rt$meanRT, col="darkblue")
+
+subMeans.log = aggregate(logRT~participant, data = ldt.data.rt, mean)
+colnames(subMeans.log) = c("subject", "meanRT")
+shapiro.test(subMeans.log$meanRT) # Log-normal: 0.07
+subQQ = qqnorm(subMeans.log$meanRT); qqline(subMeans.log$meanRT, col="darkblue")
+
+subMeans.ex = aggregate(invRT~participant, data = ldt.data.rt, mean)
+colnames(subMeans.ex) = c("subject", "meanRT")
+shapiro.test(subMeans.ex$meanRT) # ex-Gaussian: 0.44
+subQQ = qqnorm(subMeans.ex$meanRT); qqline(subMeans.ex$meanRT, col="darkblue")
+
+subMeans.box = aggregate(boxRT~participant, data = ldt.data.rt, mean)
+colnames(subMeans.box) = c("subject", "meanRT")
+shapiro.test(subMeans.box$meanRT) # BoxCox: 0.31
+subQQ = qqnorm(subMeans.box$meanRT); qqline(subMeans.box$meanRT, col="darkblue")
+```
+
+Because this were translation equivalents pairs, and to avoid employing different measures, only the value from the English pair is used. Next, we use two different methods for categorizing each pair as concrete or abstract. First, we follow Reilly & Desai (2017), who divided their stimuli into thirds and classified as concrete and abstract only the thirds with the highest and lowest values, respectively. The second method consists of dividing the words into concrete and abstract with a median-split. 
+
+First, categorise the words according to their concreteness following Reilly & Desai's method. Second, categorise concreteness with a median-split in a new column. Third, run and compare models with both predictors.
+
+```{r, eval=FALSE}
+# Split into thirds
+# Remove trials with a value of 0
+ldt.data.rt = ldt.data.rt[!(ldt.data.rt$language=="spanish" & ldt.data.rt$prime.concreteness==0),]
+ldt.data.rt = ldt.data.rt[!(ldt.data.rt$language=="english" & ldt.data.rt$target.concreteness==0),]
+# Calculate the range of values and split into three. 
+range(ldt.data.rt[ldt.data.rt$language=="english",]$target.concreteness) #1.19 - 5
+(5-1.19)/3.33
+1.19+1.14
+2.33+1.14
+# Abstract words range: 1.19-2.33
+# Mixed words range: 2.33-3.47
+# Concrete words range: 3.47-5
+ldt.data.rt$concreteness.three = "mixed"
+ldt.data.rt[(ldt.data.rt$language=="spanish" & ldt.data.rt$prime.concreteness<=2.33),]$concreteness.three = "abstract"
+ldt.data.rt[(ldt.data.rt$language=="english" & ldt.data.rt$target.concreteness<=2.33),]$concreteness.three = "abstract"
+ldt.data.rt[(ldt.data.rt$language=="spanish" & ldt.data.rt$prime.concreteness>=3.47),]$concreteness.three = "concrete"
+ldt.data.rt[(ldt.data.rt$language=="english" & ldt.data.rt$target.concreteness>=3.47),]$concreteness.three = "concrete"
+# Subset removing mixed trials.
+ldt.data.rt.three = subset(ldt.data.rt, !concreteness.three=="mixed")
+# Median-split
+# Calculate the median
+median(ldt.data.rt[ldt.data.rt$language=="spanish",]$prime.concreteness) # 4.34
+median(ldt.data.rt[ldt.data.rt$language=="english",]$target.concreteness) # 4.31
+# They are roughly the same because, in fact, the values as well as the stimuli in both languages are the same
+# Create the new categorical variable 
+ldt.data.rt$concreteness.median = "concrete"
+ldt.data.rt[(ldt.data.rt$language=="spanish" & ldt.data.rt$prime.concreteness<=4.34),]$concreteness.median = "abstract"
+ldt.data.rt[(ldt.data.rt$language=="english" & ldt.data.rt$target.concreteness<=4.31),]$concreteness.median = "abstract"
+# Apply sum contrastst to both variables
+ldt.data.rt.three$concreteness.three = as.factor(ldt.data.rt.three$concreteness.three)
+contrasts(ldt.data.rt.three$concreteness.three) = c(-0.5,0.5)
+ldt.data.rt$concreteness.median = as.factor(ldt.data.rt$concreteness.median)
+contrasts(ldt.data.rt$concreteness.median) = c(-0.5,0.5)
+# Run models
+three.model = lmer(invRT~language*condition*concreteness.three+(1|participant)+(1|target)+(1|prime), REML = FALSE,control=lmerControl(optimizer="bobyqa"), ldt.data.rt.three)
+median.model = lmer(invRT~language*condition*concreteness.median+(1|participant)+(1|target)+(1|prime), REML = FALSE,control=lmerControl(optimizer="bobyqa"), ldt.data.rt)
+```
+
+Differences between both models are minimal. Consequently, we opt for the median-split method because it allows us keeping the whole set of stimuli (compared to giving up approximately a third of the observations).
+
+There are some rows where the value for age is 0. We correct that by assigning the mean value of the rest of ages (i.e., non-zero) to those values with 0. 
+
+```{r, eval=FALSE}
+mean(ldt.data.rt[ldt.data.rt$age>=50,]$age) # 344.8649
+ldt.data.rt[ldt.data.rt$age<=50,]$age = 344.8649
+```
+
+Finally, before running the models, check classes, levels, apply sum contrasts to the categorical variables, and create z-scores.
+
+```{r, eval=FALSE}
+class(ldt.data.rt$language)
+class(ldt.data.rt$condition)
+class(ldt.data.rt$concreteness.median)
+class(ldt.data.rt$language)
+class(ldt.data.rt$invRT)
+class(ldt.data.rt$composite_score)
+class(ldt.data.rt$L2_home)
+class(ldt.data.rt$L2_social)
+class(ldt.data.rt$prime.freq)
+class(ldt.data.rt$target.freq)
+class(ldt.data.rt$age)
+ldt.data.rt$age = as.numeric(ldt.data.rt$age)
+levels(ldt.data.rt$language) 
+levels(ldt.data.rt$condition) # Remove unwanted level
+ldt.data.rt$condition = as.character(ldt.data.rt$condition)
+ldt.data.rt = subset(ldt.data.rt, !condition=="")
+ldt.data.rt$condition = as.factor(ldt.data.rt$condition)
+levels(ldt.data.rt$concreteness.median)
+contrasts(ldt.data.rt$language) = c(-0.5,0.5)
+contrasts(ldt.data.rt$condition) = c(-0.5,0.5)
+contrasts(ldt.data.rt$concreteness.median) = c(-0.5,0.5)
+ldt.data.rt$zuse = scale(ldt.data.rt$composite_score, center = TRUE, scale = TRUE)
+ldt.data.rt$zhome = scale(ldt.data.rt$L2_home, center = TRUE, scale = TRUE)
+ldt.data.rt$zsocial = scale(ldt.data.rt$L2_social, center = TRUE, scale = TRUE)
+ldt.data.rt$zprime.freq = scale(ldt.data.rt$prime.freq, center = TRUE, scale = TRUE)
+ldt.data.rt$ztarget.freq = scale(ldt.data.rt$target.freq, center = TRUE, scale = TRUE)
+ldt.data.rt$zage = scale(ldt.data.rt$age, center = TRUE, scale = TRUE)
+```
+
+Subset for analysis.
+
+```{r, eval=FALSE}
+ldt.data.rt.spanish = subset(ldt.data.rt, language=='spanish')
+ldt.data.rt.english = subset(ldt.data.rt, language=='english')
+ldt.data.rt.concrete = subset(ldt.data.rt, concreteness.median=='concrete')
+ldt.data.rt.abstract = subset(ldt.data.rt, concreteness.median=='abstract')
+```
+
+## Modelling
+
+For each analysis, we fitted a maximal model. If the model did not converge, we removed the CRI that explained the least variance and tried again until a maximal model converged. Further criticism was applied to this convergent model, including checking of assumptions (e.g., normality of residuals distribution, homoscedasticity), and removing observations with absolute standardized residuals above 2.5 SD (Baayen & Milin, 2010). (See more in the Supplementary Materials)
+
+### Analysis with data split by translation direction
+#### L1-L2 direction (Models with prime frequency)
+
+```{r, eval=FALSE}
+english.prime.mod.max = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                           zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                           condition:concreteness.median+condition:zprime.freq+
+                                           condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                           condition:concreteness.median:zprime.freq+
+                                           condition:concreteness.median:zprime.freq:zuse+
+                                           (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                           (1|participant:condition:concreteness.median)+(1|participant:condition:zprime.freq)+(1|participant:concreteness.median:zprime.freq)+
+                                           (1|participant:condition:concreteness.median:zprime.freq)+
+                                           (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.prime.mod.2 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                  zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                  condition:concreteness.median+condition:zprime.freq+
+                                                  condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                  condition:concreteness.median:zprime.freq+
+                                                  condition:concreteness.median:zprime.freq:zuse+
+                                                  (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                  (1|participant:condition:concreteness.median)+(1|participant:condition:zprime.freq)+
+                                                  (1|participant:condition:concreteness.median:zprime.freq)+
+                                                  (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.prime.mod.3 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                    zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                    condition:concreteness.median+condition:zprime.freq+
+                                                    condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq:zuse+
+                                                    (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                    (1|participant:condition:concreteness.median)+
+                                                    (1|participant:condition:concreteness.median:zprime.freq)+
+                                                    (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.prime.mod.4 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                    zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                    condition:concreteness.median+condition:zprime.freq+
+                                                    condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq:zuse+
+                                                    (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                    (1|participant:condition:concreteness.median)+
+                                                    (1|participant:condition:concreteness.median:zprime.freq)+
+                                                    (1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.prime.mod.5 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                    zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                    condition:concreteness.median+condition:zprime.freq+
+                                                    condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq:zuse+
+                                                    (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                    (1|participant:condition:concreteness.median:zprime.freq)+
+                                                    (1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.prime.mod.6 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                    zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                    condition:concreteness.median+condition:zprime.freq+
+                                                    condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq:zuse+
+                                                    (1|participant)+(1|participant:condition)+(1|participant:zprime.freq)+
+                                                    (1|participant:condition:concreteness.median:zprime.freq)+
+                                                    (1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.prime.mod.7 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                    zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                    condition:concreteness.median+condition:zprime.freq+
+                                                    condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq:zuse+
+                                                    (1|participant)+(1|participant:condition)+(1|participant:zprime.freq)+
+                                                    (1|participant:condition:concreteness.median:zprime.freq)+
+                                                    (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(english.prime.mod.7))
+qqnorm(residuals(english.prime.mod.7))
+# 2. Homoscedasticity
+plot(english.prime.mod.7)
+# It can be improved
+ldt.data.rt.english.prime.out = ldt.data.rt.english[abs(scale(resid(english.prime.mod.7))) < 2.5,]
+# Run new model
+english.prime.mod.7.out = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                    zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                    condition:concreteness.median+condition:zprime.freq+
+                                                    condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq+
+                                                    condition:concreteness.median:zprime.freq:zuse+
+                                                    (1|participant)+(1|participant:condition)+(1|participant:zprime.freq)+
+                                                    (1|participant:condition:concreteness.median:zprime.freq)+
+                                                    (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english.prime.out)
+
+# 1. Non-normality of residuals
+hist(residuals(english.prime.mod.7.out))
+qqnorm(residuals(english.prime.mod.7.out))
+# 2. Homoscedasticity
+plot(english.prime.mod.7.out)
+# VIF
+vif(english.prime.mod.7)
+vif(english.prime.mod.7.out)
+# R2
+rsquared(english.prime.mod.7)
+rsquared(english.prime.mod.7.out)
+```
+
+#### L1-L2 direction (Models with target frequency)
+
+```{r,eval=FALSE}
+english.target.mod.max = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                  zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                  condition:concreteness.median+condition:ztarget.freq+
+                                                  condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                  condition:concreteness.median:ztarget.freq+
+                                                  condition:concreteness.median:ztarget.freq:zuse+
+                                                  (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:ztarget.freq)+
+                                                  (1|participant:condition:concreteness.median)+(1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                  (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                  (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.2 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                   zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                   condition:concreteness.median+condition:ztarget.freq+
+                                                   condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                   condition:concreteness.median:ztarget.freq+
+                                                   condition:concreteness.median:ztarget.freq:zuse+
+                                                   (1|participant)+(1|participant:condition)+(1|participant:ztarget.freq)+
+                                                   (1|participant:condition:concreteness.median)+(1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                   (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                   (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.3 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+(1|participant:condition)+(1|participant:ztarget.freq)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                     (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.4 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+(1|participant:condition)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                     (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.5 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+(1|participant:condition)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                     (1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.6 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+(1|participant:condition)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.7 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+(1|participant:condition)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.8 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.9 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+
+                                                     (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                     (1|target), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.10 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                     zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                     condition:concreteness.median+condition:ztarget.freq+
+                                                     condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq+
+                                                     condition:concreteness.median:ztarget.freq:zuse+
+                                                     (1|participant)+
+                                                     (1|participant:condition:ztarget.freq)+
+                                                     (1|target), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.11 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                      zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                      condition:concreteness.median+condition:ztarget.freq+
+                                                      condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                      condition:concreteness.median:ztarget.freq+
+                                                      condition:concreteness.median:ztarget.freq:zuse+
+                                                      (1|participant)+
+                                                      (1|participant:condition:ztarget.freq), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+english.target.mod.12 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                      zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                      condition:concreteness.median+condition:ztarget.freq+
+                                                      condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                      condition:concreteness.median:ztarget.freq+
+                                                      condition:concreteness.median:ztarget.freq:zuse+
+                                                      (1|participant), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(english.target.mod.12))
+qqnorm(residuals(english.target.mod.12))
+# 2. Homoscedasticity
+plot(english.target.mod.12)
+# It can be improved
+ldt.data.rt.english.target.out = ldt.rt6.english[abs(scale(resid(english.target.mod.12))) < 2.5,]
+# Run new model
+english.target.mod.12.out = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                      zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                      condition:concreteness.median+condition:ztarget.freq+
+                                                      condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                      condition:concreteness.median:ztarget.freq+
+                                                      condition:concreteness.median:ztarget.freq:zuse+
+                                                      (1|participant), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.english.target.out)
+
+# Non-normality of residuals
+hist(residuals(english.target.mod.12.out))
+qqnorm(residuals(english.target.mod.12.out))
+# 2. Homoscedasticity
+plot(english.target.mod.12.out)
+# VIF
+vif(english.target.mod.12)
+vif(english.target.mod.12.out)
+# R2
+rsquared(english.target.mod.12)
+rsquared(english.target.mod.12.out)
+```
+
+#### L2-L1 direction (Models with prime frequency)
+
+```{r,eval=FALSE}
+spanish.prime.mod.max = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                  zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                  condition:concreteness.median+condition:zprime.freq+
+                                                  condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                  condition:concreteness.median:zprime.freq+
+                                                  condition:concreteness.median:zprime.freq:zuse+
+                                                  (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                  (1|participant:condition:concreteness.median)+(1|participant:concreteness.median:zprime.freq)+
+                                                  (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.prime.mod.2 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                      zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                      condition:concreteness.median+condition:zprime.freq+
+                                                      condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                      condition:concreteness.median:zprime.freq+
+                                                      condition:concreteness.median:zprime.freq:zuse+
+                                                      (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                      (1|participant:concreteness.median:zprime.freq)+
+                                                      (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.prime.mod.3 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                        zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                        condition:concreteness.median+condition:zprime.freq+
+                                                        condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq:zuse+
+                                                        (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:zprime.freq)+
+                                                        (1|participant:concreteness.median:zprime.freq)+
+                                                        (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.prime.mod.4 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                        zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                        condition:concreteness.median+condition:zprime.freq+
+                                                        condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq:zuse+
+                                                        (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                        (1|participant:concreteness.median:zprime.freq)+
+                                                        (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.prime.mod.5 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                        zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                        condition:concreteness.median+condition:zprime.freq+
+                                                        condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq:zuse+
+                                                        (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                        (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(spanish.prime.mod.5))
+qqnorm(residuals(spanish.prime.mod.5))
+# Homoscedasticity
+plot(spanish.prime.mod.5)
+# It can be improved
+ldt.data.rt.spanish.out = ldt.rt6.spanish[abs(scale(resid(spanish.prime.mod.5))) < 2.5,]
+# Run new model
+spanish.prime.mod.5.out = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+
+                                                        zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                        condition:concreteness.median+condition:zprime.freq+
+                                                        condition:concreteness.median:zuse+condition:zuse:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq+
+                                                        condition:concreteness.median:zprime.freq:zuse+
+                                                        (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                        (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(spanish.prime.mod.5.out))
+qqnorm(residuals(spanish.prime.mod.5.out))
+# Homoscedasticity
+plot(spanish.prime.mod.5.out)
+# VIF
+vif(spanish.prime.mod.5)
+vif(spanish.prime.mod.5.out)
+# R2
+rsquared(spanish.prime.mod.5)
+rsquared(spanish.prime.mod.5.out)
+```
+
+#### L2-L1 direction (Models with target frequency)
+
+```{r, eval=FALSE}
+spanish.target.mod.max = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                   zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                   condition:concreteness.median+condition:ztarget.freq+
+                                                   condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                   condition:concreteness.median:ztarget.freq+
+                                                   condition:concreteness.median:ztarget.freq:zuse+
+                                                   (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:ztarget.freq)+
+                                                   (1|participant:condition:concreteness.median)+(1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                   (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                   (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.target.mod.2 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                       zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                       condition:concreteness.median+condition:ztarget.freq+
+                                                       condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                       condition:concreteness.median:ztarget.freq+
+                                                       condition:concreteness.median:ztarget.freq:zuse+
+                                                       (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+(1|participant:ztarget.freq)+
+                                                       (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                       (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                       (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.target.mod.3 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                         zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                         condition:concreteness.median+condition:ztarget.freq+
+                                                         condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                         condition:concreteness.median:ztarget.freq+
+                                                         condition:concreteness.median:ztarget.freq:zuse+
+                                                         (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                         (1|participant:condition:ztarget.freq)+(1|participant:concreteness.median:ztarget.freq)+
+                                                         (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                         (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+spanish.target.mod.4 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                         zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                         condition:concreteness.median+condition:ztarget.freq+
+                                                         condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                         condition:concreteness.median:ztarget.freq+
+                                                         condition:concreteness.median:ztarget.freq:zuse+
+                                                         (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                         (1|participant:concreteness.median:ztarget.freq)+
+                                                         (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                         (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(spanish.target.mod.4))
+qqnorm(residuals(spanish.target.mod.4))
+# Homoscedasticity
+plot(spanish.target.mod.4)
+# It can be improved
+ldt.data.rt.spanish.target.out = ldt.rt6.spanish[abs(scale(resid(spanish.target.mod.4))) < 2.5,]
+# Run new model
+spanish.target.mod.4.out = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                         zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                         condition:concreteness.median+condition:ztarget.freq+
+                                                         condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                         condition:concreteness.median:ztarget.freq+
+                                                         condition:concreteness.median:ztarget.freq:zuse+
+                                                         (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                         (1|participant:concreteness.median:ztarget.freq)+
+                                                         (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                         (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish.target.out)
+
+spanish.target.mod.4.out.2 = lmer(invRT~condition+concreteness.median+zuse+condition:zuse+concreteness.median:zuse+ztarget.freq+
+                                                             zage+condition:zage+concreteness.median:zage+condition:concreteness.median:zage+
+                                                             condition:concreteness.median+condition:ztarget.freq+
+                                                             condition:concreteness.median:zuse+condition:zuse:ztarget.freq+
+                                                             condition:concreteness.median:ztarget.freq+
+                                                             condition:concreteness.median:ztarget.freq:zuse+
+                                                             (1|participant)+(1|participant:condition)+(1|participant:concreteness.median)+
+                                                             (1|participant:concreteness.median:ztarget.freq)+
+                                                             (1|participant:condition:concreteness.median:ztarget.freq)+
+                                                             (1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.spanish.target.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(spanish.target.mod.4.out.2))
+qqnorm(residuals(spanish.target.mod.4.out.2))
+# Homoscedasticity
+plot(spanish.target.mod.4.out.2)
+# VIF
+vif(spanish.target.mod.4)
+vif(spanish.target.mod.4.out.2)
+# R2
+rsquared(spanish.target.mod.4)
+rsquared(spanish.target.mod.4.out.2)
+```
+
+### Analysis with data split by concreteness
+#### Concrete words (Models with prime frequency)
+
+```{r, eval=FALSE}
+concrete.prime.mod.max = lmer(invRT~condition+language+language:zuse+
+                                                     zage+condition:zage+zage:language+
+                                                     condition:language+condition:zprime.freq+
+                                                     condition:language:zuse+language:condition:zage+
+                                                     condition:language:zprime.freq+
+                                                     condition:language:zprime.freq:zuse+
+                                                     (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:zprime.freq)+
+                                                     (1|participant:condition:language)+(1|participant:condition:zprime.freq)+(1|participant:language:zprime.freq)+
+                                                     (1|participant:condition:language:zprime.freq)+
+                                                     (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+concrete.prime.mod.2 = lmer(invRT~condition+language+language:zuse+
+                                                            zage+condition:zage+zage:language+
+                                                            condition:language+condition:zprime.freq+
+                                                            condition:language:zuse+language:condition:zage+
+                                                            condition:language:zprime.freq+
+                                                            condition:language:zprime.freq:zuse+
+                                                            (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:zprime.freq)+
+                                                            (1|participant:condition:language)+(1|participant:condition:zprime.freq)+
+                                                            (1|participant:condition:language:zprime.freq)+
+                                                            (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+concrete.prime.mod.3 = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:language)+(1|participant:condition:zprime.freq)+
+                                                              (1|participant:condition:language:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+concrete.prime.mod.4 = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:language)+(1|participant:condition:zprime.freq)+
+                                                              (1|participant:condition:language:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+concrete.prime.mod.5 = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:zprime.freq)+
+                                                              (1|participant:condition:language:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(concrete.prime.mod.5))
+qqnorm(residuals(concrete.prime.mod.5))
+# Homoscedasticity
+plot(concrete.prime.mod.5)
+# It can be improved
+ldt.data.rt.concrete.prime.out = ldt.rt6.concrete[abs(scale(resid(concrete.prime.mod.5))) < 2.5,]
+# Run new model
+concrete.prime.mod.5.out = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:zprime.freq)+
+                                                              (1|participant:condition:language:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete.prime.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(concrete.prime.mod.5.out))
+qqnorm(residuals(concrete.prime.mod.5.out))
+# Homoscedasticity
+plot(concrete.prime.mod.5.out)
+# VIF
+vif(concrete.prime.mod.5)
+vif(concrete.prime.mod.5.out)
+# R2
+rsquared(concrete.prime.mod.5)
+rsquared(concrete.prime.mod.5.out)
+```
+
+### Analysis with data split by concreteness
+#### Concrete words (Models with target frequency)
+
+```{r, eval=FALSE}
+concrete.target.mod.max = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                            zage+condition:zage+zage:language+
+                                                            condition:language+condition:ztarget.freq+
+                                                            condition:language:zuse+language:condition:zage+
+                                                            condition:language:ztarget.freq+
+                                                            condition:language:ztarget.freq:zuse+
+                                                            (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                            (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                            (1|participant:condition:language:ztarget.freq)+
+                                                            (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+concrete.target.mod.2 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                             zage+condition:zage+zage:language+
+                                                             condition:language+condition:ztarget.freq+
+                                                             condition:language:zuse+language:condition:zage+
+                                                             condition:language:ztarget.freq+
+                                                             condition:language:ztarget.freq:zuse+
+                                                             (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                             (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                             (1|participant:condition:language:ztarget.freq)+
+                                                             (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+concrete.target.mod.3 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                               (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(concrete.target.mod.3))
+qqnorm(residuals(concrete.target.mod.3))
+# Homoscedasticity
+plot(concrete.target.mod.3)
+# It can be improved
+ldt.data.rt.concrete.target.out = ldt.rt6.concrete[abs(scale(resid(concrete.target.mod.3))) < 2.5,]
+# Run new model
+concrete.target.mod.3.out = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                               (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete.target.out)
+
+concrete.target.mod.3.out.2 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                                   zage+condition:zage+zage:language+
+                                                                   condition:language+condition:ztarget.freq+
+                                                                   condition:language:zuse+language:condition:zage+
+                                                                   condition:language:ztarget.freq+
+                                                                   condition:language:ztarget.freq:zuse+
+                                                                   (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                                   (1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                                   (1|participant:condition:language:ztarget.freq)+
+                                                                   (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete.target.out)
+
+concrete.target.mod.3.out.3 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                                     zage+condition:zage+zage:language+
+                                                                     condition:language+condition:ztarget.freq+
+                                                                     condition:language:zuse+language:condition:zage+
+                                                                     condition:language:ztarget.freq+
+                                                                     condition:language:ztarget.freq:zuse+
+                                                                     (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                                     (1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                                     (1|participant:condition:language:ztarget.freq)+
+                                                                     (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete.target.out)
+
+concrete.target.mod.3.out.4 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                                     zage+condition:zage+zage:language+
+                                                                     condition:language+condition:ztarget.freq+
+                                                                     condition:language:zuse+language:condition:zage+
+                                                                     condition:language:ztarget.freq+
+                                                                     condition:language:ztarget.freq:zuse+
+                                                                     (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                                     (1|participant:condition:ztarget.freq)+
+                                                                     (1|participant:condition:language:ztarget.freq)+
+                                                                     (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.rt.concrete.target.corrected.median.out)
+
+concrete.target.mod.3.out.5 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                                     zage+condition:zage+zage:language+
+                                                                     condition:language+condition:ztarget.freq+
+                                                                     condition:language:zuse+language:condition:zage+
+                                                                     condition:language:ztarget.freq+
+                                                                     condition:language:ztarget.freq:zuse+
+                                                                     (1|participant)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                                     (1|participant:condition:ztarget.freq)+
+                                                                     (1|participant:condition:language:ztarget.freq)+
+                                                                     (1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.concrete.target.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(concrete.target.mod.3.out.5))
+qqnorm(residuals(concrete.target.mod.3.out.5))
+# Homoscedasticity
+plot(concrete.target.mod.3.out.5)
+# VIF
+vif(concrete.target.mod.3)
+vif(concrete.target.mod.3.out.5)
+# R2
+rsquared(concrete.target.mod.3)
+rsquared(concrete.target.mod.3.out.5)
+```
+
+#### Abstract words (Models with prime frequency)
+
+```{r, eval=FALSE}
+abstract.prime.mod.max = lmer(invRT~condition+language+language:zuse+
+                                                            zage+condition:zage+zage:language+
+                                                            condition:language+condition:zprime.freq+
+                                                            condition:language:zuse+language:condition:zage+
+                                                            condition:language:zprime.freq+
+                                                            condition:language:zprime.freq:zuse+
+                                                            (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:zprime.freq)+
+                                                            (1|participant:condition:language)+(1|participant:condition:zprime.freq)+(1|participant:language:zprime.freq)+
+                                                            (1|participant:condition:language:zprime.freq)+
+                                                            (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.prime.mod.2 = lmer(invRT~condition+language+language:zuse+
+                                                            zage+condition:zage+zage:language+
+                                                            condition:language+condition:zprime.freq+
+                                                            condition:language:zuse+language:condition:zage+
+                                                            condition:language:zprime.freq+
+                                                            condition:language:zprime.freq:zuse+
+                                                            (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                            (1|participant:condition:language)+(1|participant:condition:zprime.freq)+(1|participant:language:zprime.freq)+
+                                                            (1|participant:condition:language:zprime.freq)+
+                                                            (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.prime.mod.3 = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:language)+(1|participant:condition:zprime.freq)+
+                                                              (1|participant:condition:language:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.prime.mod.4 = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:zprime.freq)+
+                                                              (1|participant:condition:language:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.prime.mod.5 = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(abstract.prime.mod.5))
+qqnorm(residuals(abstract.prime.mod.5))
+# Homoscedasticity
+plot(abstract.prime.mod.5)
+# It can be improved
+ldt.data.rt.abstract.prime.out = ldt.rt6.abstract[abs(scale(resid(abstract.prime.mod.5))) < 2.5,]
+# Run new model
+abstract.prime.mod.5.out = lmer(invRT~condition+language+language:zuse+
+                                                              zage+condition:zage+zage:language+
+                                                              condition:language+condition:zprime.freq+
+                                                              condition:language:zuse+language:condition:zage+
+                                                              condition:language:zprime.freq+
+                                                              condition:language:zprime.freq:zuse+
+                                                              (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                              (1|participant:condition:zprime.freq)+
+                                                              (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract.prime.out)
+
+abstract.prime.mod.5.out.2 = lmer(invRT~condition+language+language:zuse+
+                                                                  zage+condition:zage+zage:language+
+                                                                  condition:language+condition:zprime.freq+
+                                                                  condition:language:zuse+language:condition:zage+
+                                                                  condition:language:zprime.freq+
+                                                                  condition:language:zprime.freq:zuse+
+                                                                  (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                                  (1|participant:condition:zprime.freq)+
+                                                                  (1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract.prime.out)
+
+# 1. Non-normality of residuals
+hist(residuals(abstract.prime.mod.5.out.2))
+qqnorm(residuals(abstract.prime.mod.5.out.2))
+# 2. Homoscedasticity
+plot(abstract.prime.mod.5.out.2)
+# VIF
+vif(abstract.prime.mod.5)
+vif(abstract.prime.mod.5.out.2)
+# R2
+rsquared(abstract.prime.mod.5)
+rsquared(abstract.prime.mod.5.out.2)
+```
+
+#### Abstract words (Models with target frequency)
+
+```{r, eval=FALSE}
+abstract.target.mod.max = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                             zage+condition:zage+zage:language+
+                                                             condition:language+condition:ztarget.freq+
+                                                             condition:language:zuse+language:condition:zage+
+                                                             condition:language:ztarget.freq+
+                                                             condition:language:ztarget.freq:zuse+
+                                                             (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                             (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+(1|participant:language:ztarget.freq)+
+                                                             (1|participant:condition:language:ztarget.freq)+
+                                                             (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.2 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                             zage+condition:zage+zage:language+
+                                                             condition:language+condition:ztarget.freq+
+                                                             condition:language:zuse+language:condition:zage+
+                                                             condition:language:ztarget.freq+
+                                                             condition:language:ztarget.freq:zuse+
+                                                             (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:ztarget.freq)+
+                                                             (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+
+                                                             (1|participant:condition:language:ztarget.freq)+
+                                                             (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.3 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                               (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.4 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                               (1|participant:condition:language)+(1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.5 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                               (1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.6 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:condition)+(1|participant:language)+
+                                                               (1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.7 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:language)+
+                                                               (1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+abstract.target.mod.8 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:language)+
+                                                               (1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(abstract.target.mod.8))
+qqnorm(residuals(abstract.target.mod.8))
+# Homoscedasticity
+plot(abstract.target.mod.8)
+# It can be improved
+ldt.data.rt.abstract.target.out = ldt.rt6.abstract[abs(scale(resid(abstract.target.mod.8))) < 2.5,]
+# Run new model
+abstract.target.mod.8.out = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                               zage+condition:zage+zage:language+
+                                                               condition:language+condition:ztarget.freq+
+                                                               condition:language:zuse+language:condition:zage+
+                                                               condition:language:ztarget.freq+
+                                                               condition:language:ztarget.freq:zuse+
+                                                               (1|participant)+(1|participant:language)+
+                                                               (1|participant:condition:ztarget.freq)+
+                                                               (1|participant:condition:language:ztarget.freq)+
+                                                               (1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract.target.out)
+
+abstract.target.mod.8.out.2 = lmer(invRT~condition+language+language:zuse+ztarget.freq+
+                                                                   zage+condition:zage+zage:language+
+                                                                   condition:language+condition:ztarget.freq+
+                                                                   condition:language:zuse+language:condition:zage+
+                                                                   condition:language:ztarget.freq+
+                                                                   condition:language:ztarget.freq:zuse+
+                                                                   (1|participant)+(1|participant:language)+
+                                                                   (1|participant:condition:ztarget.freq)+
+                                                                   (1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.rt.abstract.target.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(abstract.target.mod.8.out.2))
+qqnorm(residuals(abstract.target.mod.8.out.2))
+# Homoscedasticity
+plot(abstract.target.mod.8.out.2)
+# VIF
+vif(abstract.target.mod.8)
+vif(abstract.target.mod.8.out.2)
+# R2
+rsquared(abstract.target.mod.8)
+rsquared(abstract.target.mod.8.out.2)
+```
+
+# Experiment 2 - Cross-language Semantic Lexical Decision Task
+Analysis of the data from Experiment 1, where we employed a Lexical Decision Task with translation equivalent pairs. 
+
+Load .csv file.
+
+```{r, eval=FALSE}
+read.csv("semldt.data.csv")
+```
+
+Create a categorical variable for NoA with a median split, and apply sum contrasts. 
+
+```{r, eval=FALSE}
+median(semldt.data$noa) # 12
+semldt.data$noa.cat = "high"
+semldt.data[semldt.data$noa<=12,]$noa.cat = "low"
+contrasts(semldt.data$noa.cat)
+semldt.data$noa.cat = as.factor(semldt.data$noa.cat)
+levels(semldt.data$noa.cat)
+contrasts(semldt.data$noa.cat) = c(-0.5,0.5)
+count(semldt.data[semldt.data$noa.cat=='low',]$noa.cat)
+
+```
+
+The dataset is ready, so we start modeling. Leaving out concreteness and frequency allowed us to fit a model with the whole data set from both translation directions, including language, prime type, L2 use, age and NoA (categorically operationalized as high vs. low), as well as interactions of interest between these factors, as fixed effects. The random structure from the models in Experiment 1 was modified accordingly.
+
+```{r, eval=FALSE}
+semldt.mod.max = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+
+                 zage+condition:zage+zage:language+
+                 condition:language+condition:noa.cat+
+                 condition:language:zuse+language:condition:zage+
+                 condition:language:noa.cat+
+                 condition:language:noa.cat:zuse+
+                 (1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+  (1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+                           (1|participant:condition:language:noa.cat)+(1|language:noa.cat)+   (1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+semldt.mod.2 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+semldt.mod.3 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+semldt.mod.4 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+semldt.mod.5 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+semldt.mod.6 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+semldt.mod.7 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(semldt.mod.7))
+qqnorm(residuals(semldt.mod.7))
+# Homoscedasticity
+plot(semldt.mod.7)
+# It can be improved
+semldt.data.out = semldt.noa.rt4[abs(scale(resid(semldt.mod.7))) < 2.5,]
+# Run new model
+semldt.mod.7.out = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.out)
+
+semldt.mod.7.out.2 = lmer(invRT~condition+language+language:zuse+noa.cat+noa.cat:language+zuse+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.out)
+
+# Check assumptions
+# 1. Non-normality of residuals
+hist(residuals(semldt.mod.7.out.2))
+qqnorm(residuals(semldt.mod.7.out.2))
+# 2. Homoscedasticity
+plot(semldt.mod.7.out.2)
+# VIF
+vif(semldt.mod.7)
+vif(semldt.mod.7.out.2)
+# R2
+rsquared(semldt.mod.7)
+rsquared(semldt.mod.7.out.2)
+
+# Model for the accuracy analysis
+semldt.accuracy.mod = glmer(accuracy~condition+language+language:zuse+noa.cat+noa.cat:language+zage+condition:zage+zage:language+condition:language+condition:noa.cat+condition:language:zuse+language:condition:zage+condition:language:noa.cat+condition:language:noa.cat:zuse+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition),control=glmerControl(optimizer="bobyqa"),family="binomial", semldt.data)
+
+```
+
+# Analysis of the impact of executive control indexes on the LDTs - 
+First, the analysis of the data from Experiment 1. 
+
+Load .csv file
+
+```{r, eval=FALSE}
+read.csv("ldt.data.ec.csv")
+```
+
+Create subsets for each translation direction. 
+
+```{r, eval=FALSE}
+ldt.data.ec.english = subset(ldt.data.ec, language=="english")
+ldt.data.ec.spanish = subset(ldt.data.ec, language=="spanish")
+```
+
+First, we run a parsimonious model including all the IVs.
+
+```{r, eval=FALSE}
+test.model = lmer(invRT~language*condition*concreteness.median*zlocal*zuse*zage+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+# Check VIF
+vif(test.model)
+```
+
+This models leads to collinearity problems with Age and L2 use. Importantly, these factors do not significantly interact with local and/or mixing costs. Therefore, we can exclude them from the analysis. However, let's first check that they do not interact with condition and EC in separated models. 
+
+```{r, eval=FALSE}
+# Local costs and L2 use
+local.use.model = lmer(invRT~language*condition*concreteness.median*zlocal*zuse+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE,control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+local.use.model.2 = lmer(invRT~language*condition*concreteness.median*zlocal*zuse+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+summary(local.use.model.2)
+
+# Mixing costs and L2 use
+mixing.use.model = lmer(invRT~language*condition*concreteness.median*zmixing*zuse+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+mixing.use.model.2 = lmer(invRT~language*condition*concreteness.median*zmixing*zuse+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+summary(mixing.use.model.2)
+
+# Local costs and Age
+local.age.model = lmer(invRT~language*condition*concreteness.median*zlocal*zage+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+local.age.model.2 = lmer(invRT~language*condition*concreteness.median*zlocal*zage+(1|participant)+(1|participant:condition)+(1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+local.age.model.3 = lmer(invRT~language*condition*concreteness.median*zlocal*zage+(1|participant)+(1|participant:condition)+(1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+summary(local.age.model.3)
+
+# Mixing costs and Age
+mixing.age.model = lmer(invRT~language*condition*concreteness.median*zmixing*zage+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+mixing.age.model.2 = lmer(invRT~language*condition*concreteness.median*zmixing*zage+(1|participant)+(1|participant:condition)+(1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+summary(mixing.age.model.2)
+```
+
+No significant interactions between switching costs and Age or L2 use. Therefore, it is safe to remove those factors causing collinearity problems. Let's check the contribution of concreteness to see if we can further simplify the models. 
+
+```{r, eval=FALSE}
+mixing.concreteness.model = lmer(invRT~language*condition*concreteness.median*zmixing+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+
+local.concreteness.model = lmer(invRT~language*condition*concreteness.median*zlocal+(1|participant)+(1|participant:condition)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="nloptwrap", calc.derivs = FALSE), ldt.data.ec)
+```
+
+There is no significant effect of Concreteness either, so we collapse the factor. Since there is no need of including as many factors, the models can contain Language. As in the analysis in Experiment 1, we include Prime and Target frequency separatedly, though. 
+
+```{r, eval=FALSE}
+# Local costs and Prime frequency model
+local.prime.mod.max = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:condition)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE,control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.prime.mod.2 = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+test.age.prime.local.model.3 = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.prime.mod.4 = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.prime.mod.5 = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|prime:condition), REML = FALSE,control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.prime.mod.6 = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target), REML = FALSE, control=lmerControl(optimizer="bobyqa"),ldt.data.ec)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(local.prime.mod.6))
+qqnorm(residuals(local.prime.mod.6))
+# Homoscedasticity
+plot(local.prime.mod.6)
+# New model without outliers
+ldt.data.ec.local.prime.out = ldt.rt.age.2.dccs[abs(scale(resid(local.prime.mod.6))) < 0.25,]
+# Run model
+local.prime.mod.6.out = lmer(invRT~language+condition+zlocal+language:condition+condition:zlocal+condition:zprime.freq+language:condition:zlocal+language:condition:zprime.freq+condition:zlocal:zprime.freq+language:condition:zlocal:zprime.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec.local.prime.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(local.prime.mod.6.out))
+qqnorm(residuals(local.prime.mod.6.out))
+# Homoscedasticity
+plot(local.prime.mod.6.out)
+# VIF
+vif(local.prime.mod.6)
+vif(local.prime.mod.6.out)
+# R2
+rsquared(local.prime.mod.6)
+rsquared(local.prime.mod.6.out)
+
+# Local costs and Target frequency
+local.target.mod.max = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:condition)+(1|participant:ztarget.freq)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.target.mod.2 = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:ztarget.freq)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE,control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.target.mod.3 = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.target.mod.4 = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.target.mod.5 = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+local.target.mod.6 = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(local.target.mod.6))
+qqnorm(residuals(local.target.mod.6))
+# Homoscedasticity
+plot(local.target.mod.6)
+# It can be improved
+ldt.data.ec.local.target.out = ldt.data.ec[abs(scale(resid(local.target.mod.6))) < 0.25,]
+# Run new model
+local.target.mod.6.out = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target), REML = FALSE,control=lmerControl(optimizer="bobyqa"), ldt.data.ec.local.target.out)
+
+local.target.mod.6.out.2 = lmer(invRT~language+condition+zlocal+ztarget.freq+language:condition+condition:zlocal+condition:ztarget.freq+language:condition:zlocal+language:condition:ztarget.freq+condition:zlocal:ztarget.freq+language:condition:zlocal:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec.local.target.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(local.target.mod.6.out.2))
+qqnorm(residuals(local.target.mod.6.out.2))
+# Homoscedasticity
+plot(local.target.mod.6.out.2)
+
+# Mixing costs and Prime frequency
+mixing.prime.mod.max = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:condition)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.prime.mod.2 = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.prime.mod.3 = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:condition:zprime.freq)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.prime.mod.4 = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:zprime.freq)+(1|participant:language:condition)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.prime.mod.5 = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:language:condition)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|target:condition)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.prime.mod.6 = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:language:condition)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(mixing.prime.mod.6))
+qqnorm(residuals(mixing.prime.mod.6))
+# Homoscedasticity
+plot(mixing.prime.mod.6)
+# It can be improved
+ldt.data.ec.mixing.prime.out = ldt.data.ec[abs(scale(resid(mixing.prime.mod.6))) < 2.5,]
+
+# Run new model
+mixing.prime.mod.6.out = lmer(invRT~language+condition+zmixing+language:condition+condition:zmixing+condition:zprime.freq+language:condition:zmixing+language:condition:zprime.freq+condition:zmixing:zprime.freq+language:condition:zmixing:zprime.freq+(1|participant)+(1|participant:language:condition)+(1|participant:language:condition:zprime.freq)+(1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"),ldt.data.ec.mixing.prime.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(mixing.prime.mod.6.out))
+qqnorm(residuals(mixing.prime.mod.6.out))
+# Homoscedasticity
+plot(mixing.prime.mod.6.out)
+# R2
+rsquared(mixing.prime.mod.6)
+rsquared(mixing.prime.mod.6.out)
+
+# Mixing costs and Target frequency
+mixing.target.mod.max = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:condition)+(1|participant:ztarget.freq)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.target.mod.2 = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:ztarget.freq)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.target.mod.3 = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:ztarget.freq)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.target.mod.4 = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.target.mod.5 = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|target)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.target.mod.6 = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|participant:language:condition:ztarget.freq)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+mixing.target.mod.7 = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(mixing.target.mod.7))
+qqnorm(residuals(mixing.target.mod.7))
+# Homoscedasticity
+plot(mixing.target.mod.7)
+# It can be improved
+ldt.data.ec.mixing.target.out = ldt.data.ec[abs(scale(resid(mixing.target.mod.7))) < 2.5,]
+# Run new model
+mixing.target.mod.7.out = lmer(invRT~language+condition+zmixing+ztarget.freq+language:condition+condition:zmixing+condition:ztarget.freq+language:condition:zmixing+language:condition:ztarget.freq+condition:zmixing:ztarget.freq+language:condition:zmixing:ztarget.freq+(1|participant)+(1|participant:language:condition)+(1|participant:condition:ztarget.freq)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), ldt.data.ec.mixing.target.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(mixing.target.mod.7.out))
+qqnorm(residuals(mixing.target.mod.7.out))
+# Homoscedasticity
+plot(mixing.target.mod.7.out)
+# R2
+rsquared(mixing.target.mod.7)
+rsquared(mixing.target.mod.7.out)
+```
+
+# Analysis of the impact of executive control indexes on the LDTs - 
+First, the analysis of the data from Experiment 2. 
+
+Load .csv file.
+
+```{r, eval=FALSE}
+read.csv("semldt.data.ec.csv")
+```
+
+Run the models. 
+
+```{r, eval=FALSE}
+# Local costs
+semantic.local.mod.max = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|participant:condition:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+semantic.local.mod.2 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+v(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(semantic.local.mod.2))
+qqnorm(residuals(semantic.local.mod.2))
+# Homoscedasticity
+plot(semantic.local.mod.2)
+# It can be improved
+semldt.data.ec.local.out = semldt.data.ec[abs(scale(resid(semantic.local.mod.2))) < 2.5,]
+
+# Run new model
+semantic.local.mod.2.out = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE,control=lmerControl(optimizer="bobyqa"), semldt.data.ec.local.out)
+
+semantic.local.mod.2.out.2 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec.local.out)
+
+semantic.local.mod.2.out.3 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec.local.out)
+
+semantic.local.mod.2.out.4 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec.local.out)
+
+semantic.local.mod.2.out.5 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zlocal.good+condition:zlocal.good+language:condition:zlocal.good+condition:zlocal.good:noa.cat+language:condition:zlocal.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec.local.out)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(semantic.local.mod.2.out.5))
+qqnorm(residuals(semantic.local.mod.2.out.5))
+# Homoscedasticity
+plot(semantic.local.mod.2.out.5)
+# R2
+rsquared(semantic.local.mod.2)
+rsquared(semantic.local.mod.2.out.5)
+# VIF
+vif(semantic.local.mod.2)
+vif(semantic.local.mod.2.out.5)
+
+# Mixing costs
+# MIXING
+semantic.mixing.mod.max = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+condition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|participant:condition:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+semantic.mixing.mod.2 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+condition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+semantic.mixing.mod.3 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+condition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime)+(1|prime:condition), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+semantic.mixing.mod.4 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+condition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:condition:noa.cat)+(1|participant:language:noa.cat)+1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+semantic.mixing.mod.5 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+condition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec)
+
+# Check assumptions
+# Non-normality of residuals
+hist(residuals(semantic.mixing.mod.5))
+qqnorm(residuals(semantic.mixing.mod.5))
+# Homoscedasticity
+plot(semantic.mixing.mod.5)
+# It can be improved
+semldt.data.ec.mixing.out = semldt.data.ec[abs(scale(resid(semantic.mixing.mod.5))) < 2.5,]
+# Run new model
+semantic.mixing.mod.5.out = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+ondition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:condition:language)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec.mixing.out)
+
+semantic.mixing.mod.5.out.2 = lmer(invRT~condition+language+noa.cat+noa.cat:language+zmixing.good+condition:zmixing.good+language:condition:zmixing.good+condition:zmixing.good:noa.cat+language:condition:zmixing.good:noa.cat+condition:language+condition:noa.cat+condition:language:noa.cat+condition:language:noa.cat+(1|participant)+(1|participant:condition)+(1|participant:language)+(1|participant:noa.cat)+(1|participant:language:noa.cat)+(1|target)+(1|target:condition)+(1|prime), REML = FALSE, control=lmerControl(optimizer="bobyqa"), semldt.data.ec.mixing.out)
+```
+
+
+
